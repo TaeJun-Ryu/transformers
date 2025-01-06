@@ -773,10 +773,10 @@ class LlamaSdpaAttention(LlamaAttention):
         attn_output = self.o_proj(attn_output)
         clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 4 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
 
-        if self.forward_cnt == 200:
-            torch.save(query_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_q.pth')
-            torch.save(key_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_k.pth')
-            torch.save(value_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_v.pth')
+        # if self.forward_cnt == 200:
+        #     torch.save(query_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_q.pth')
+        #     torch.save(key_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_k.pth')
+        #     torch.save(value_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_v.pth')
 
         self.forward_cnt += 1
 
