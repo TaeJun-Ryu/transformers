@@ -48,6 +48,8 @@ from ...utils import (
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_gpt2 import GPT2Config
 
+from lib.logger import get_logger
+clog = get_logger()
 
 logger = logging.get_logger(__name__)
 
@@ -163,6 +165,8 @@ class GPT2Attention(nn.Module):
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
 
         self.pruned_heads = set()
+
+        self.forward_cnt = 1
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -298,6 +302,9 @@ class GPT2Attention(nn.Module):
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
+        
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | hidden_states | 1 | {hidden_states.shape} | {(hidden_states.element_size() * hidden_states.nelement()) / 1024:.2f} KB")
+
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
                 raise ValueError(
@@ -311,14 +318,25 @@ class GPT2Attention(nn.Module):
         else:
             query, key, value = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 1 | {query.shape} | {(query.element_size() * query.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 1 | {key.shape} | {(key.element_size() * key.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 1 | {value.shape} | {(value.element_size() * value.nelement()) / 1024:.2f} KB")
+
         query = self._split_heads(query, self.num_heads, self.head_dim)
         key = self._split_heads(key, self.num_heads, self.head_dim)
         value = self._split_heads(value, self.num_heads, self.head_dim)
+
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 2 | {query.shape} | {(query.element_size() * query.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 2 | {key.shape} | {(key.element_size() * key.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 2 | {value.shape} | {(value.element_size() * value.nelement()) / 1024:.2f} KB")
 
         if layer_past is not None:
             past_key, past_value = layer_past
             key = torch.cat((past_key, key), dim=-2)
             value = torch.cat((past_value, value), dim=-2)
+
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 3 | {key.shape} | {(key.element_size() * key.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 3 | {value.shape} | {(value.element_size() * value.nelement()) / 1024:.2f} KB")
 
         if use_cache is True:
             present = (key, value)
@@ -330,13 +348,27 @@ class GPT2Attention(nn.Module):
         else:
             attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 1 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
         attn_output = self._merge_heads(attn_output, self.num_heads, self.head_dim)
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 2 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
         attn_output = self.c_proj(attn_output)
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 3 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
         attn_output = self.resid_dropout(attn_output)
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 4 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
 
         outputs = (attn_output, present)
         if output_attentions:
             outputs += (attn_weights,)
+
+        # if self.forward_cnt == 117:
+        #     torch.save(query, f'repo/02_gpt2-large-I242-O117/data/{self.forward_cnt}_{self.layer_idx}_q.pth')
+        #     torch.save(key, f'repo/02_gpt2-large-I242-O117/data/{self.forward_cnt}_{self.layer_idx}_k.pth')
+        #     torch.save(value, f'repo/02_gpt2-large-I242-O117/data/{self.forward_cnt}_{self.layer_idx}_v.pth')
+
+        self.forward_cnt += 1
 
         return outputs  # a, present, (attentions)
 
