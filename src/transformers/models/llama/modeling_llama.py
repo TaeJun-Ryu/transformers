@@ -64,6 +64,8 @@ if is_torch_fx_available():
 
     _prepare_4d_causal_attention_mask = torch.fx.wrap(_prepare_4d_causal_attention_mask)
 
+from lib.logger import get_logger
+clog = get_logger()
 
 logger = logging.get_logger(__name__)
 
@@ -317,6 +319,8 @@ class LlamaAttention(nn.Module):
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
         self._init_rope()
+
+        self.forward_cnt = 1
 
     def _init_rope(self):
         if self.config.rope_scaling is None:
@@ -690,13 +694,23 @@ class LlamaSdpaAttention(LlamaAttention):
 
         bsz, q_len, _ = hidden_states.size()
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | hidden_states | 1 | {hidden_states.shape} | {(hidden_states.element_size() * hidden_states.nelement()) / 1024:.2f} KB")
+
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 1 | {query_states.shape} | {(query_states.element_size() * query_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 1 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 1 | {value_states.shape} | {(value_states.element_size() * value_states.nelement()) / 1024:.2f} KB")
+
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 2 | {query_states.shape} | {(query_states.element_size() * query_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 2 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 2 | {value_states.shape} | {(value_states.element_size() * value_states.nelement()) / 1024:.2f} KB")
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
@@ -705,12 +719,21 @@ class LlamaSdpaAttention(LlamaAttention):
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 3 | {query_states.shape} | {(query_states.element_size() * query_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 3 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 4 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 4 | {value_states.shape} | {(value_states.element_size() * value_states.nelement()) / 1024:.2f} KB")
+
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 5 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 5 | {value_states.shape} | {(value_states.element_size() * value_states.nelement()) / 1024:.2f} KB")
 
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
@@ -725,6 +748,10 @@ class LlamaSdpaAttention(LlamaAttention):
             key_states = key_states.contiguous()
             value_states = value_states.contiguous()
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | query_states | 6 | {query_states.shape} | {(query_states.element_size() * query_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | key_states | 6 | {key_states.shape} | {(key_states.element_size() * key_states.nelement()) / 1024:.2f} KB")
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | value_states | 6 | {value_states.shape} | {(value_states.element_size() * value_states.nelement()) / 1024:.2f} KB")
+
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query_states,
             key_states,
@@ -735,10 +762,23 @@ class LlamaSdpaAttention(LlamaAttention):
             is_causal=self.is_causal and attention_mask is None and q_len > 1,
         )
 
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 1 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
         attn_output = attn_output.transpose(1, 2).contiguous()
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 2 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 3 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
 
         attn_output = self.o_proj(attn_output)
+        clog.info(f"{self.layer_idx} | {self.forward_cnt} | attn_output | 4 | {attn_output.shape} | {(attn_output.element_size() * attn_output.nelement()) / 1024:.2f} KB")
+
+        if self.forward_cnt == 200:
+            torch.save(query_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_q.pth')
+            torch.save(key_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_k.pth')
+            torch.save(value_states, f'repo/Meta-Llama-3-8B-I233-O200/data/{self.forward_cnt}_{self.layer_idx}_v.pth')
+
+        self.forward_cnt += 1
 
         return attn_output, None, past_key_value
 
